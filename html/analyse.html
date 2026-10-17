@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Bench Analysis</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1f23; --muted: #6b7078; --line: #e3e3df;
+  --accent: #3b6fd8; --good: #2e8b57; --warn: #c98a12; --bad: #c8463c;
+  --good-bg: rgba(46,139,87,.14); --warn-bg: rgba(201,138,18,.16); --bad-bg: rgba(200,70,60,.15);
+  --bar: #3b6fd8; --code-bg: #f1f1ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171b; --panel: #1d2026; --text: #e6e7ea; --muted: #9298a2; --line: #2e323a;
+    --accent: #7aa2f7; --good: #5cc28a; --warn: #e2b14a; --bad: #ef7a6f;
+    --good-bg: rgba(92,194,138,.16); --warn-bg: rgba(226,177,74,.16); --bad-bg: rgba(239,122,111,.16);
+    --bar: #7aa2f7; --code-bg: #262a31;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171b; --panel: #1d2026; --text: #e6e7ea; --muted: #9298a2; --line: #2e323a;
+  --accent: #7aa2f7; --good: #5cc28a; --warn: #e2b14a; --bad: #ef7a6f;
+  --good-bg: rgba(92,194,138,.16); --warn-bg: rgba(226,177,74,.16); --bad-bg: rgba(239,122,111,.16);
+  --bar: #7aa2f7; --code-bg: #262a31;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 17px; margin: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button, select, label.btn { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button:hover, label.btn:hover { border-color: var(--accent); }
+main { max-width: 1280px; margin: 0 auto; padding: 18px 16px 60px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 18px; }
+section h2 { font-size: 15px; margin: 0 0 12px; }
+.muted { color: var(--muted); }
+#drop { border: 2px dashed var(--line); border-radius: 10px; padding: 40px 16px; text-align: center; color: var(--muted); }
+#drop.over { border-color: var(--accent); color: var(--accent); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; }
+.meta b { font-weight: 600; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 9px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+th.sorted::after { content: " ▾"; } th.sorted.asc::after { content: " ▴"; }
+tbody tr:hover { background: var(--bg); }
+td.good { background: var(--good-bg); } td.warn { background: var(--warn-bg); } td.bad { background: var(--bad-bg); }
+td.model { font-weight: 600; cursor: pointer; color: var(--accent); }
+td .run { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 6px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 18px; }
+.bars h3 { font-size: 13px; margin: 0 0 8px; }
+.bar-row { display: grid; grid-template-columns: minmax(90px, 40%) 1fr; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
+.bar-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { position: relative; height: 18px; background: var(--bg); border-radius: 4px; }
+.bar-fill { height: 100%; background: var(--bar); border-radius: 4px; min-width: 2px; }
+.bar-fill.ref { background: var(--warn); }
+.bar-mark { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 2px dashed var(--warn); }
+.delta { display: block; font-size: 10px; line-height: 1.1; color: var(--muted); }
+.delta.up { color: var(--good); } .delta.down { color: var(--bad); }
+tr.ref td:first-child { box-shadow: inset 3px 0 var(--warn); }
+.pill.ref { background: var(--warn-bg); color: var(--warn); }
+.bar-val { position: absolute; right: 6px; top: 0; line-height: 18px; font-size: 11px; font-variant-numeric: tabular-nums; }
+svg text { fill: var(--muted); font-size: 11px; }
+svg .lbl { fill: var(--text); }
+svg .ax { stroke: var(--line); }
+details.model { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
+details.model > summary { padding: 8px 12px; cursor: pointer; font-weight: 600; }
+details.model .body { padding: 0 12px 12px; }
+details.suite { margin: 6px 0; }
+details.suite > summary { cursor: pointer; padding: 4px 0; }
+.pill { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-left: 6px; }
+.pill.good { background: var(--good-bg); color: var(--good); } .pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.item { border-left: 3px solid var(--line); padding: 4px 10px; margin: 6px 0; }
+.item.pass { border-color: var(--good); } .item.fail { border-color: var(--bad); }
+.item .head { display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.item .head .k { color: var(--muted); }
+pre { background: var(--code-bg); padding: 8px; border-radius: 6px; white-space: pre-wrap; word-break: break-word;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 6px 0 0; max-height: 320px; overflow: auto; }
+.err { color: var(--bad); }
+.filter { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.hidden { display: none !important; }
+#runs { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 12px; display: inline-flex; gap: 6px; align-items: center; }
+.chip button { border: 0; padding: 0 2px; background: none; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM Bench Analysis</h1>
+  <div class="controls">
+    <label class="btn">Load JSON…<input id="file" type="file" accept=".json,application/json" multiple hidden></label>
+    <select id="runSel" title="Run to show"></select>
+    <label class="muted" for="refSel">Compare to</label>
+    <select id="refSel" title="Reference model: other models show their difference to it"></select>
+    <button id="theme" title="Toggle theme">◐</button>
+  </div>
+</header>
+<main>
+  <section id="drop">
+    Drop one or more <code>bench-results/llmbench-*.json</code> files here, or use <b>Load JSON…</b>.<br>
+    <span class="muted">Everything stays in your browser. Load several runs to compare them or merge the latest result per model.</span>
+  </section>
+
+  <div id="view" class="hidden">
+    <section>
+      <h2>Loaded runs</h2>
+      <div id="runs"></div>
+      <div id="meta" class="meta" style="margin-top:10px"></div>
+    </section>
+
+    <section id="chatSec">
+      <h2>Chat models</h2>
+      <div class="tablewrap"><table id="chatTbl"></table></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">load = first request incl. model load · TTFT / gen t/s from streamed runs (median) · pp = prefill tokens/s · Avg = mean of available quality scores · small figures = difference to the reference model (<b>Compare to</b>, default MiniMax-M3): pp for scores, % otherwise, green = better. Click a model to jump to its details.</p>
+    </section>
+
+    <section id="propSec">
+      <h2>Model properties</h2>
+      <div class="tablewrap"><table id="propTbl"></table></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">All values from LiteLLM <code>/model/info</code> · Ctx = max_input_tokens (else max_tokens) · Params / Quant need matching keys in <code>model_info</code> (e.g. <code>parameters: 35B</code>, <code>quantization: Q4_K_M</code>). Runs made before this feature have no properties.</p>
+    </section>
+
+    <section id="chartSec">
+      <h2>Charts</h2>
+      <div class="grid" id="bars"></div>
+      <h3 style="font-size:13px;margin:20px 0 6px">Quality vs. generation speed <span class="muted">(dot size = parameters · dashed lines = reference model)</span></h3>
+      <div id="scatter"></div>
+    </section>
+
+    <section id="parSec">
+      <h2>Parallel users</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 10px">N requests sent at the same instant. <b>scaling</b> = total t/s compared with 1 user (×2 with 2 users = two GPUs / slots really work in parallel, ×1 = requests are queued) · <b>efficiency</b> = scaling / N · <b>slowest incl. wait</b> = tokens / (queue wait + generation) of the worst-off user · <b>deployments</b> = distinct LiteLLM deployments (x-litellm-model-id) that answered.</p>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">
+        <div><h3 style="font-size:13px;margin:0 0 6px">Total throughput (t/s) by users</h3><div id="parChartAgg"></div></div>
+        <div><h3 style="font-size:13px;margin:0 0 6px">Slowest user incl. wait (t/s) by users</h3><div id="parChartUser"></div></div>
+      </div>
+      <div class="tablewrap" style="margin-top:12px"><table id="parTbl"></table></div>
+    </section>
+
+    <section id="embSec">
+      <h2>Embedding models</h2>
+      <div class="tablewrap"><table id="embTbl"></table></div>
+    </section>
+
+    <section id="detSec">
+      <h2>Details</h2>
+      <div class="filter">
+        <label><input type="checkbox" id="onlyFail" checked> Only show failures</label>
+        <button id="expandAll">Expand all</button>
+        <button id="collapseAll">Collapse all</button>
+      </div>
+      <div id="details"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const SUITES = ["math", "code", "ifeval", "tools", "needle"];
+const SUITE_LABEL = { math: "Math", code: "Code", ifeval: "IF", tools: "Tools", needle: "Needle" };
+const runs = []; // {name, data}
+let sortKey = "avg", sortAsc = false;
+const DEFAULT_REF = "MiniMax-M3";
+let refChoice = null; // null = default (MiniMax-M3 if present), "" = none
+try { refChoice = localStorage.getItem("llmbench-ref"); } catch (e) {}
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (x, d = 1) => x == null || isNaN(x) ? "–" : Number(x).toFixed(d);
+const pct = x => x == null ? "–" : Math.round(x * 100) + "%";
+const cls = x => x == null ? "" : x >= 0.9 ? "good" : x >= 0.6 ? "warn" : "bad";
+const stampFmt = s => s && /^\d{8}-\d{6}$/.test(s) ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)} ${s.slice(9,11)}:${s.slice(11,13)}:${s.slice(13,15)}` : (s || "?");
+
+// ---------- model properties ----------
+// props come from LiteLLM /model/info (written by llmbench.py); older runs have none
+function getProps(model, res) {
+  const p = { ...((res && res.props) || {}) };
+  if (p.context_window == null) p.context_window = p.max_input_tokens || p.max_tokens || null;
+  p._sources = p.sources || [];
+  return p;
+}
+const fmtCtx = x => !x ? "–" : x >= 1024 ? Math.round(x / 1024) + "k" : String(x);
+const fmtParams = p => !p.params_b ? "–" : `${+p.params_b.toFixed(2)}B${p.active_params_b ? ` (A${p.active_params_b}B)` : ""}`;
+const yesNo = v => v == null ? "–" : v ? "✓" : "✗";
+
+// ---------- theme ----------
+try { const t = localStorage.getItem("llmbench-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+$("#theme").onclick = () => {
+  const cur = document.documentElement.dataset.theme
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("llmbench-theme", next); } catch (e) {}
+};
+
+// ---------- loading ----------
+function addFiles(files) {
+  const jobs = [...files].filter(f => f.name.endsWith(".json")).map(f => f.text().then(t => {
+    try {
+      const data = JSON.parse(t);
+      if (!data.chat && !data.embedding) throw new Error("not an llmbench result");
+      data.chat ??= {}; data.embedding ??= {}; data.meta ??= {};
+      const i = runs.findIndex(r => r.name === f.name);
+      if (i >= 0) runs[i] = { name: f.name, data }; else runs.push({ name: f.name, data });
+    } catch (e) { alert(`${f.name}: ${e.message}`); }
+  }));
+  Promise.all(jobs).then(() => {
+    runs.sort((a, b) => (a.data.meta.started || a.name).localeCompare(b.data.meta.started || b.name));
+    refreshRunSelect(true);
+  });
+}
+$("#file").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+["dragover", "dragenter"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $("#drop").classList.remove("over"); }));
+document.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+function refreshRunSelect(pickBest) {
+  const sel = $("#runSel"), prev = sel.value;
+  sel.innerHTML = "";
+  if (runs.length > 1) sel.add(new Option("All runs · latest per model", "__merge"));
+  runs.forEach((r, i) => {
+    const n = Object.keys(r.data.chat).length + Object.keys(r.data.embedding).length;
+    sel.add(new Option(`${stampFmt(r.data.meta.started)} · ${n} model${n === 1 ? "" : "s"}`, String(i)));
+  });
+  if (!pickBest && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  else if (runs.length) {
+    // default: the run with the most models, else merged view
+    let best = 0;
+    runs.forEach((r, i) => { if (Object.keys(r.data.chat).length > Object.keys(runs[best].data.chat).length) best = i; });
+    sel.value = String(best);
+  }
+  render();
+}
+$("#runSel").onchange = render;
+
+// ---------- view model ----------
+function currentView() {
+  const v = $("#runSel").value;
+  if (v === "__merge") {
+    const chat = {}, embedding = {};
+    // later runs win, but a model that only errored never overrides a successful earlier result
+    const ok = r => !(r.speed && r.speed.error) && !r.error;
+    for (const r of runs) {
+      for (const [m, res] of Object.entries(r.data.chat))
+        if (!chat[m] || ok(res) || !ok(chat[m].res)) chat[m] = { res, run: r.data.meta.started };
+      for (const [m, res] of Object.entries(r.data.embedding))
+        if (!embedding[m] || !res.error) embedding[m] = { res, run: r.data.meta.started };
+    }
+    return { merged: true, chat, embedding, metas: runs.map(r => r.data.meta) };
+  }
+  const r = runs[+v];
+  if (!r) return null;
+  const wrap = o => Object.fromEntries(Object.entries(o).map(([m, res]) => [m, { res, run: r.data.meta.started }]));
+  return { merged: false, chat: wrap(r.data.chat), embedding: wrap(r.data.embedding), metas: [r.data.meta] };
+}
+
+function chatRows(view) {
+  return Object.entries(view.chat).map(([model, { res, run }]) => {
+    const sp = res.speed || {};
+    const scores = Object.fromEntries(SUITES.map(s => [s, res[s] ? res[s].score : null]));
+    const have = Object.values(scores).filter(x => x != null);
+    const props = getProps(model, res);
+    return {
+      model, run, res, props,
+      params: props.params_b ?? null, quant: props.quant ?? null, ctx: props.context_window ?? null,
+      load: sp.first_request_s, ttft: sp.ttft_ms, gen: sp.decode_tps, pp: sp.prefill_tps,
+      ...scores,
+      avg: have.length ? have.reduce((a, b) => a + b, 0) / have.length : null,
+      cost: res.cost, wall: res.wall_s,
+      par: res.parallel && res.parallel.best_scaling != null ? res.parallel.best_scaling : null,
+      error: sp.error || res.error || null,
+    };
+  });
+}
+
+// ---------- render ----------
+// ---------- reference model ----------
+function pickRef(models) {
+  if (refChoice === "") return null;
+  if (refChoice && models.includes(refChoice)) return refChoice;
+  return models.find(m => m === DEFAULT_REF)
+    || models.find(m => /minimax[-_ .]?m3/i.test(m)) || null;
+}
+function refreshRefSelect(rows, ref) {
+  const sel = $("#refSel");
+  sel.innerHTML = "";
+  sel.add(new Option("none", ""));
+  rows.map(r => r.model).sort().forEach(m => sel.add(new Option(m, m)));
+  sel.value = ref ?? "";
+}
+$("#refSel").onchange = e => {
+  refChoice = e.target.value;
+  try { localStorage.setItem("llmbench-ref", refChoice); } catch (err) {}
+  render();
+};
+// difference of v to the reference value; pct columns in percentage points, others relative
+function deltaHtml(k, f, v, refv) {
+  if (v == null || refv == null || k === "par") return "";
+  const lower = LOWER_IS_BETTER.has(k);
+  let d, txt;
+  if (f === "pct") { d = Math.round((v - refv) * 100); txt = d === 0 ? "±0 pp" : `${d > 0 ? "+" : "−"}${Math.abs(d)} pp`; }
+  else {
+    if (!refv) return "";
+    d = Math.round((v / refv - 1) * 100);
+    txt = d === 0 ? "±0%" : `${d > 0 ? "+" : "−"}${Math.abs(d)}%`;
+  }
+  const better = lower ? d < 0 : d > 0;
+  return `<span class="delta ${d === 0 ? "" : better ? "up" : "down"}">${txt}</span>`;
+}
+
+function render() {
+  const view = runs.length ? currentView() : null;
+  $("#drop").classList.toggle("hidden", !!view);
+  $("#view").classList.toggle("hidden", !view);
+  if (!view) return;
+  renderRuns(view);
+  const rows = chatRows(view);
+  const ref = pickRef(rows.map(r => r.model));
+  refreshRefSelect(rows, ref);
+  rows.ref = rows.find(r => r.model === ref) || null;
+  renderChatTable(rows, view.merged);
+  renderProps(rows, view);
+  renderBars(rows);
+  renderScatter(rows);
+  renderParallel(rows);
+  renderEmb(view);
+  renderDetails(rows);
+}
+
+function renderRuns(view) {
+  $("#runs").innerHTML = runs.map((r, i) =>
+    `<span class="chip">${esc(r.name)}<button data-i="${i}" title="Remove">✕</button></span>`).join("");
+  $("#runs").querySelectorAll("button").forEach(b => b.onclick = () => { runs.splice(+b.dataset.i, 1); refreshRunSelect(true); });
+  const m = view.metas[view.metas.length - 1] || {};
+  const parts = view.merged
+    ? [["Runs", view.metas.length], ["Range", `${stampFmt(view.metas[0].started)} → ${stampFmt(m.finished || m.started)}`]]
+    : [["Started", stampFmt(m.started)], ["Finished", stampFmt(m.finished)], ["Endpoint", m.base_url],
+       ["Suites", (m.suites || []).join(", ")], ["Math items", m.math_items], ["Code items", m.code_items],
+       ["HF items", m.hf_items], ["No-think", m.no_think],
+       ["Parallel users", m.parallel_levels && m.parallel_levels.length ? [...new Set([1, ...m.parallel_levels])].join(", ") : undefined]];
+  $("#meta").innerHTML = parts.filter(p => p[1] !== undefined)
+    .map(([k, v]) => `<span><span class="muted">${k}:</span> <b>${esc(v)}</b></span>`).join("");
+}
+
+const COLS = [
+  ["model", "Model"], ["params", "Params", "params"], ["quant", "Quant", "str"], ["ctx", "Ctx", "ctx"], ["load", "load s", 1], ["ttft", "TTFT ms", 0], ["gen", "gen t/s", 1], ["pp", "pp t/s", 0],
+  ...SUITES.map(s => [s, SUITE_LABEL[s], "pct"]), ["avg", "Avg", "pct"], ["par", "par ×", "x"], ["cost", "cost $", 4], ["wall", "time s", 0],
+];
+const LOWER_IS_BETTER = new Set(["load", "ttft", "cost", "wall"]);
+
+function renderChatTable(rows, merged) {
+  $("#chatSec").classList.toggle("hidden", !rows.length);
+  if (!rows.length) return;
+  const ref = rows.ref;
+  rows = [...rows].sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const c = typeof x === "string" ? x.localeCompare(y) : x - y;
+    return sortAsc ? c : -c;
+  });
+  const head = "<thead><tr>" + COLS.map(([k, l]) =>
+    `<th data-k="${k}" class="${k === sortKey ? "sorted" + (sortAsc ? " asc" : "") : ""}">${l}</th>`).join("") + "</tr></thead>";
+  const body = rows.map(r => `<tr class="${r === ref ? "ref" : ""}">` + COLS.map(([k, , f]) => {
+    if (k === "model") return `<td class="model" data-m="${esc(r.model)}">${esc(r.model)}${r === ref ? ' <span class="pill ref" title="reference model">ref</span>' : ""}${merged ? `<span class="run">${esc(stampFmt(r.run))}</span>` : ""}${r.error ? ' <span class="pill bad" title="' + esc(r.error) + '">error</span>' : ""}</td>`;
+    const dl = ref && r !== ref ? deltaHtml(k, f, r[k], ref[k]) : "";
+    if (f === "pct") return `<td class="${cls(r[k])}">${pct(r[k])}${dl}</td>`;
+    if (f === "params") return `<td>${fmtParams(r.props)}</td>`;
+    if (f === "str") return `<td>${esc(r[k] ?? "–")}</td>`;
+    if (f === "ctx") return `<td>${fmtCtx(r[k])}</td>`;
+    if (f === "x") return `<td title="best total-throughput scaling with parallel users">${r[k] == null ? "–" : "×" + r[k]}</td>`;
+    return `<td>${num(r[k], f)}${dl}</td>`;
+  }).join("") + "</tr>").join("");
+  $("#chatTbl").innerHTML = head + "<tbody>" + body + "</tbody>";
+  $("#chatTbl").querySelectorAll("th").forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    if (k === sortKey) sortAsc = !sortAsc;
+    else { sortKey = k; sortAsc = k === "model" || LOWER_IS_BETTER.has(k); }
+    render();
+  });
+  $("#chatTbl").querySelectorAll("td.model").forEach(td => td.onclick = () => {
+    const d = document.getElementById("det-" + td.dataset.m);
+    if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  });
+}
+
+const PROP_COLS = [
+  ["Params", p => fmtParams(p), p => p.params_b],
+  ["Quant", p => esc(p.quant ?? "–"), p => p.quant],
+  ["Ctx", p => fmtCtx(p.context_window), p => p.context_window],
+  ["max in", p => fmtCtx(p.max_input_tokens), p => p.max_input_tokens],
+  ["max out", p => fmtCtx(p.max_output_tokens), p => p.max_output_tokens],
+  ["vector size", p => p.output_vector_size ?? "–", p => p.output_vector_size],
+  ["tools", p => yesNo(p.supports_function_calling), p => p.supports_function_calling],
+  ["vision", p => yesNo(p.supports_vision), p => p.supports_vision],
+  ["reasoning", p => yesNo(p.supports_reasoning), p => p.supports_reasoning],
+  ["$ in/M", p => num(p.input_cost_per_mtok, 2), p => p.input_cost_per_mtok],
+  ["$ out/M", p => num(p.output_cost_per_mtok, 2), p => p.output_cost_per_mtok],
+  ["mode", p => esc(p.mode ?? "–"), p => p.mode],
+  ["upstream", p => `<span class="muted">${esc(p.upstream_model || "–")}</span>`, p => p.upstream_model],
+];
+
+function renderProps(rows, view) {
+  const all = [
+    ...rows.map(r => ({ model: r.model, props: r.props })),
+    ...Object.entries(view.embedding).map(([m, { res }]) => ({ model: m + " (embed)", props: getProps(m, res) })),
+  ].sort((a, b) => (b.props.params_b ?? -1) - (a.props.params_b ?? -1));
+  $("#propSec").classList.toggle("hidden", !all.some(x => x.props._sources.length));
+  // hide columns that are empty for every model
+  const cols = PROP_COLS.filter(([, , v]) => all.some(x => { const y = v(x.props); return y != null && y !== "" && y !== 0; }));
+  $("#propTbl").innerHTML = "<thead><tr><th>Model</th>" + cols.map(([h]) => `<th>${h}</th>`).join("") + "</tr></thead><tbody>" +
+    all.map(x => `<tr><td>${esc(x.model)}</td>` + cols.map(([, f]) => `<td>${f(x.props)}</td>`).join("") + "</tr>").join("") + "</tbody>";
+}
+
+function barChart(title, rows, key, fmt, lowerBetter) {
+  const data = rows.filter(r => r[key] != null).sort((a, b) => lowerBetter ? a[key] - b[key] : b[key] - a[key]);
+  if (!data.length) return "";
+  const max = Math.max(...data.map(r => r[key])) || 1;
+  const ref = rows.ref && rows.ref[key] != null ? rows.ref : null;
+  const mark = ref ? `<span class="bar-mark" style="left:${(ref[key] / max * 100).toFixed(1)}%" title="${esc(ref.model)}: ${fmt(ref[key])}"></span>` : "";
+  return `<div class="bars"><h3>${title}${lowerBetter ? ' <span class="muted">(lower is better)</span>' : ""}</h3>` +
+    data.map(r => `<div class="bar-row"><span class="name" title="${esc(r.model)}">${r === ref ? "★ " : ""}${esc(r.model)}</span>
+      <span class="bar-track"><span class="bar-fill${r === ref ? " ref" : ""}" style="display:block;width:${(r[key] / max * 100).toFixed(1)}%"></span>
+      ${mark}<span class="bar-val">${fmt(r[key])}</span></span></div>`).join("") + "</div>";
+}
+
+function renderBars(rows) {
+  const html = [
+    barChart("Average quality", rows, "avg", pct),
+    barChart("Generation speed (t/s)", rows, "gen", x => num(x, 1)),
+    barChart("Prefill speed (t/s)", rows, "pp", x => num(x, 0)),
+    barChart("Time to first token (ms)", rows, "ttft", x => num(x, 0), true),
+    barChart("Load / first request (s)", rows, "load", x => num(x, 1), true),
+    barChart("Total wall time (s)", rows, "wall", x => num(x, 0), true),
+  ].join("");
+  $("#chartSec").classList.toggle("hidden", !html);
+  $("#bars").innerHTML = html;
+}
+
+function renderScatter(rows) {
+  const data = rows.filter(r => r.gen != null && r.avg != null);
+  if (data.length < 1) { $("#scatter").innerHTML = '<p class="muted">Not enough data.</p>'; return; }
+  const W = 760, H = 320, L = 48, R = 20, T = 14, B = 38;
+  const xmax = Math.max(...data.map(r => r.gen)) * 1.1 || 1;
+  const ymin = Math.min(0.5, ...data.map(r => r.avg)) - 0.05;
+  const x = v => L + v / xmax * (W - L - R);
+  const y = v => T + (1 - (v - ymin) / (1.02 - ymin)) * (H - T - B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px" role="img" aria-label="Quality vs speed">`;
+  for (let i = 0; i <= 5; i++) {
+    const v = ymin + (1 - ymin) * i / 5;
+    s += `<line class="ax" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${pct(v)}</text>`;
+  }
+  for (let i = 0; i <= 5; i++) {
+    const v = xmax * i / 5;
+    s += `<text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${num(v, 0)}</text>`;
+  }
+  s += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">generation tokens/s →</text>`;
+  const pmax = Math.max(1, ...data.map(r => r.params || 0));
+  const rad = r => r.params ? 4 + 10 * Math.sqrt(r.params / pmax) : 5;
+  const ref = rows.ref && data.includes(rows.ref) ? rows.ref : null;
+  if (ref) s += `<line x1="${x(ref.gen)}" x2="${x(ref.gen)}" y1="${T}" y2="${H - B}" stroke="var(--warn)" stroke-dasharray="4 4"/>
+    <line x1="${L}" x2="${W - R}" y1="${y(ref.avg)}" y2="${y(ref.avg)}" stroke="var(--warn)" stroke-dasharray="4 4"/>`;
+  data.forEach(r => {
+    const col = r === ref ? "var(--warn)" : "var(--accent)";
+    const cx = x(r.gen), cy = y(r.avg), anchor = cx > W - 180 ? "end" : "start", dx = anchor === "end" ? -9 : 9;
+    s += `<circle cx="${cx}" cy="${cy}" r="${rad(r)}" fill="${col}" fill-opacity=".6" stroke="${col}"><title>${esc(r.model)}: ${pct(r.avg)} @ ${num(r.gen)} t/s · ${fmtParams(r.props)}</title></circle>
+      <text class="lbl" x="${cx + dx}" y="${cy + 4}" text-anchor="${anchor}">${esc(r.model)}</text>`;
+  });
+  $("#scatter").innerHTML = s + "</svg>";
+}
+
+const SERIES = ["#3b6fd8", "#d8693b", "#2e9d6a", "#a64fc4", "#c9a227", "#d04a7a", "#3aa7b8", "#7a7f87"];
+
+function lineChart(series, key) {
+  // series: [{name, color, pts:[{n, v}]}]
+  const all = series.flatMap(s => s.pts.filter(p => p.v != null));
+  if (!all.length) return '<p class="muted">No data.</p>';
+  const W = 520, H = 260, L = 50, R = 16, T = 12, B = 34;
+  const ns = [...new Set(all.map(p => p.n))].sort((a, b) => a - b);
+  const vmax = Math.max(...all.map(p => p.v)) * 1.1 || 1;
+  const x = n => ns.length === 1 ? (L + W - R) / 2 : L + ns.indexOf(n) / (ns.length - 1) * (W - L - R);
+  const y = v => T + (1 - v / vmax) * (H - T - B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(key)}">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = vmax * i / 4;
+    s += `<line class="ax" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${num(v, 0)}</text>`;
+  }
+  ns.forEach(n => s += `<text x="${x(n)}" y="${H - B + 16}" text-anchor="middle">${n}</text>`);
+  s += `<text x="${(L + W - R) / 2}" y="${H - 3}" text-anchor="middle">simultaneous users</text>`;
+  series.forEach(sr => {
+    const pts = sr.pts.filter(p => p.v != null);
+    if (pts.length > 1) s += `<polyline fill="none" stroke="${sr.color}" stroke-width="2" points="${pts.map(p => `${x(p.n)},${y(p.v)}`).join(" ")}"/>`;
+    pts.forEach(p => s += `<circle cx="${x(p.n)}" cy="${y(p.v)}" r="4" fill="${sr.color}"><title>${esc(sr.name)} · ${p.n} users: ${num(p.v)} t/s</title></circle>`);
+  });
+  s += "</svg>";
+  s += `<div class="meta" style="font-size:12px;margin-top:4px">${series.map(sr =>
+    `<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${sr.color};margin-right:4px"></span>${esc(sr.name)}</span>`).join("")}</div>`;
+  return s;
+}
+
+function renderParallel(rows) {
+  const par = rows.filter(r => r.res.parallel && (r.res.parallel.levels || r.res.parallel.error));
+  $("#parSec").classList.toggle("hidden", !par.length);
+  if (!par.length) return;
+  const series = par.filter(r => r.res.parallel.levels).map((r, i) => ({
+    name: r.model, color: SERIES[i % SERIES.length], levels: r.res.parallel.levels,
+  }));
+  $("#parChartAgg").innerHTML = lineChart(series.map(s => ({ ...s, pts: s.levels.map(l => ({ n: l.n, v: l.aggregate_tps })) })), "total throughput");
+  $("#parChartUser").innerHTML = lineChart(series.map(s => ({ ...s, pts: s.levels.map(l => ({ n: l.n, v: l.slowest_user_tps })) })), "slowest user");
+  const effCls = e => e == null ? "" : e >= 0.8 ? "good" : e >= 0.55 ? "warn" : "bad";
+  const hdr = ["Model", "users", "ok", "total t/s", "t/s per user", "slowest incl. wait", "TTFT ms", "TTFT max", "scaling", "efficiency", "deployments"];
+  $("#parTbl").innerHTML = "<thead><tr>" + hdr.map(h => `<th>${h}</th>`).join("") + "</tr></thead><tbody>" +
+    par.map(r => {
+      const p = r.res.parallel;
+      if (p.error) return `<tr><td>${esc(r.model)}</td><td colspan="${hdr.length - 1}" class="err" style="text-align:left">${esc(p.error)}</td></tr>`;
+      return p.levels.map((l, i) => {
+        const deps = Object.entries(l.deployments || {});
+        const depTxt = deps.length ? `${deps.length} <span class="muted">(${deps.map(([k, c]) => esc(k.slice(0, 10)) + "×" + c).join(", ")})</span>` : "–";
+        return `<tr><td>${i ? "" : esc(r.model)}</td><td>${l.n}</td>
+          <td class="${l.errors ? "bad" : ""}" title="${esc(l.error || "")}">${l.ok}/${l.n}</td>
+          <td>${num(l.aggregate_tps)}</td><td>${num(l.per_user_tps)}</td><td>${num(l.slowest_user_tps)}</td>
+          <td>${num(l.ttft_ms, 0)}</td><td>${num(l.ttft_ms_max, 0)}</td>
+          <td>${l.scaling == null ? "–" : "×" + l.scaling}</td>
+          <td class="${l.n > 1 ? effCls(l.efficiency) : ""}">${pct(l.efficiency)}</td><td style="text-align:left">${depTxt}</td></tr>`;
+      }).join("");
+    }).join("") + "</tbody>";
+}
+
+function renderEmb(view) {
+  const e = Object.entries(view.embedding);
+  $("#embSec").classList.toggle("hidden", !e.length);
+  if (!e.length) return;
+  const hdr = ["Embedding model", "Params", "Ctx", "load s", "dims", "top-1", "MRR", "docs/s", "tok/s", "time s"];
+  $("#embTbl").innerHTML = "<thead><tr>" + hdr.map(h => `<th>${h}</th>`).join("") + "</tr></thead><tbody>" +
+    e.map(([m, { res: r }]) => { const p = getProps(m, r); return `<tr><td>${esc(m)}${r.error ? ' <span class="pill bad" title="' + esc(r.error) + '">error</span>' : ""}</td>
+      <td>${fmtParams(p)}</td><td>${fmtCtx(p.context_window)}</td>
+      <td>${num(r.first_request_s)}</td><td>${r.dims ?? "–"}</td><td class="${cls(r.top1)}">${pct(r.top1)}</td>
+      <td class="${cls(r.mrr)}">${num(r.mrr, 3)}</td><td>${num(r.docs_per_s)}</td><td>${num(r.tokens_per_s, 0)}</td><td>${num(r.wall_s, 0)}</td></tr>`; }).join("") +
+    "</tbody>";
+}
+
+function itemLabel(d) {
+  return d.q ?? d.task ?? d.prompt ?? d.case ?? d.query ?? (d.depth != null ? `depth ${d.depth}` : "?");
+}
+
+function itemHtml(suite, d) {
+  const head = [];
+  if (d.expected !== undefined) head.push(`<span><span class="k">expected</span> ${esc(d.expected)}</span>`);
+  if (d.got !== undefined) head.push(`<span><span class="k">got</span> ${esc(d.got)}</span>`);
+  if (d.tokens != null) head.push(`<span><span class="k">tokens</span> ${d.tokens}</span>`);
+  if (d.prompt_tokens) head.push(`<span><span class="k">prompt tok</span> ${d.prompt_tokens}</span>`);
+  if (d.prefill_tps) head.push(`<span><span class="k">pp t/s</span> ${num(d.prefill_tps, 0)}</span>`);
+  if (d.rank != null) head.push(`<span><span class="k">rank</span> ${d.rank}</span>`);
+  let body = "";
+  if (d.error) body += `<pre class="err">${esc(d.error)}</pre>`;
+  if (d.stderr) body += `<pre class="err">${esc(d.stderr)}</pre>`;
+  if (d.tool_calls && d.tool_calls.length) body += `<pre>${esc(d.tool_calls.map(t => `${t.name}(${t.arguments})`).join("\n"))}</pre>`;
+  if (d.answer) body += `<pre>${esc(d.answer)}</pre>`;
+  return `<div class="item ${d.pass ? "pass" : "fail"}" data-pass="${d.pass ? 1 : 0}">
+    <div class="head"><b>${d.pass ? "✓" : "✗"}</b><span>${esc(itemLabel(d))}</span>${head.join("")}</div>${body}</div>`;
+}
+
+// every raw model_info field LiteLLM returned
+const DERIVED = new Set(["sources", "context_window", "params_b", "active_params_b", "quant", "upstream_model",
+  "input_cost_per_mtok", "output_cost_per_mtok", "_sources"]);
+function infoHtml(p) {
+  const kv = Object.entries(p).filter(([k]) => !DERIVED.has(k)).sort(([a], [b]) => a.localeCompare(b));
+  if (!kv.length) return "";
+  return `<details class="suite"><summary>LiteLLM model_info <span class="muted" style="font-size:12px">(${kv.length} fields)</span></summary>
+    <pre>${esc(kv.map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join("\n"))}</pre></details>`;
+}
+
+function renderDetails(rows) {
+  const sorted = [...rows].sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
+  $("#details").innerHTML = sorted.map(r => {
+    const res = r.res;
+    const suites = SUITES.filter(s => res[s]).map(s => {
+      const st = res[s], fails = (st.details || []).filter(d => !d.pass).length;
+      return `<details class="suite" ${fails ? "open" : ""}><summary>${SUITE_LABEL[s]}
+        <span class="pill ${cls(st.score)}">${st.passed ?? "?"}/${st.total ?? "?"} · ${pct(st.score)}</span>
+        ${st.errors ? `<span class="pill bad">${st.errors} error${st.errors > 1 ? "s" : ""}</span>` : ""}
+        ${st.avg_completion_tokens != null ? `<span class="muted" style="font-size:12px;margin-left:6px">avg ${st.avg_completion_tokens} tok</span>` : ""}
+        ${st.error ? `<span class="err" style="font-size:12px;margin-left:6px">${esc(st.error)}</span>` : ""}
+        </summary>${(st.details || []).map(d => itemHtml(s, d)).join("")}</details>`;
+    }).join("");
+    const sp = res.speed || {};
+    const speed = sp.error ? `<pre class="err">${esc(sp.error)}</pre>` :
+      `<div class="meta">${[["load s", num(sp.first_request_s)], ["TTFT ms", num(sp.ttft_ms, 0)], ["gen t/s", num(sp.decode_tps)],
+        ["gen tokens", sp.gen_tokens], ["pp t/s", num(sp.prefill_tps, 0)], ["pp prompt tok", sp.prefill_prompt_tokens]]
+        .filter(p => p[1] != null).map(([k, v]) => `<span><span class="muted">${k}:</span> <b>${v}</b></span>`).join("")}</div>`;
+    const p = r.props;
+    const propLine = `<div class="meta" style="margin-bottom:6px">${[["params", fmtParams(p)],
+      ["quant", esc(p.quant ?? "–")], ["ctx", fmtCtx(p.context_window)], ["upstream", p.upstream_model ? esc(p.upstream_model) : null]]
+      .filter(x => x[1] != null && x[1] !== "–").map(([k, v]) => `<span><span class="muted">${k}:</span> <b>${v}</b></span>`).join("")}</div>`;
+    return `<details class="model" id="det-${esc(r.model)}"><summary>${esc(r.model)}
+      <span class="pill ${cls(r.avg)}">avg ${pct(r.avg)}</span>${r.error ? '<span class="pill bad">error</span>' : ""}</summary>
+      <div class="body">${propLine}${infoHtml(p)}${speed}${suites || '<p class="muted">No quality suites.</p>'}</div></details>`;
+  }).join("") || '<p class="muted">No chat models.</p>';
+  applyFailFilter();
+}
+
+function applyFailFilter() {
+  const only = $("#onlyFail").checked;
+  document.querySelectorAll("#details .item").forEach(el => el.classList.toggle("hidden", only && el.dataset.pass === "1"));
+}
+$("#onlyFail").onchange = applyFailFilter;
+$("#expandAll").onclick = () => document.querySelectorAll("#details details").forEach(d => d.open = true);
+$("#collapseAll").onclick = () => document.querySelectorAll("#details details").forEach(d => d.open = false);
+
+render();
+</script>
+</body>
+</html>
